@@ -98,6 +98,7 @@ if not resultados:
 
 candidatos = pd.DataFrame(resultados)
 candidatos['nombre'] = candidatos['nombre'].fillna(candidatos['archivo'])
+candidatos[['email', 'telefono']] = candidatos[['email', 'telefono']].fillna('')  # CVs sin correo o teléfono
 
 # misma habilidad con distinta escritura ("Power BI" / "power bi") cuenta como una
 escrituras = {}
