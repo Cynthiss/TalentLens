@@ -4,6 +4,11 @@ pytesseract==0.3.13
 pillow==13.0.0
 pandas==3.1.0
 spacy==3.8.16
+# dependencias de spaCy: versiones más nuevas no cargan modelos guardados
+cymem==2.0.13
+murmurhash==1.0.15
+preshed==3.0.13
+srsly==2.5.4
 scikit-learn==1.9.1
 streamlit==1.66.1
 ipykernel
