@@ -19,8 +19,8 @@ CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción 
 ```
 
 1. **Captura.** Texto de PDF con `pymupdf` y de Word con `python-docx` (incluyendo tablas). Si una página no tiene texto (CV escaneado) se lee con OCR (`pytesseract`, español).
-2. **Limpieza.** Normalización unicode y de espacios, eliminación de viñetas, unión de correos partidos en dos líneas y reparación de la `@` mal leída por el OCR.
-3. **Secciones.** Un diccionario de sinónimos agrupa los encabezados de cada CV (Experiencia / Trayectoria / Historial laboral, Habilidades / Skills / Aptitudes...).
+2. **Limpieza.** Normalización unicode (NFKC, que también separa ligaduras tipográficas como `ﬁ`) y de espacios, eliminación de viñetas, unión de correos partidos en dos líneas y reparación de la `@` mal leída por el OCR.
+3. **Secciones.** Un diccionario de sinónimos agrupa los encabezados de cada CV (Experiencia / Trayectoria / Historial laboral, Habilidades / Skills / Aptitudes...), incluso cuando el encabezado está partido en dos líneas.
 4. **Extracción.**
    - **Correo y teléfono:** expresiones regulares.
    - **Nombre:** NER preentrenado de spaCy (`es_core_news_sm`) + reglas, ignorando las secciones donde aparecen otras personas (referencias).
@@ -30,17 +30,23 @@ CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción 
 
 ## Datos
 
-20 CVs **ficticios** en español con contexto guatemalteco (`CVs_ficticios_prueba/`): 14 en PDF y 6 en Word, con formatos variados a propósito (clásico, dos columnas con foto, creativo, tablas, escaneados, varias páginas con referencias, encabezados poco comunes). Las personas, correos, teléfonos y empresas son inventados.
+Todos los CVs son **ficticios** y en español, con contexto guatemalteco: personas, correos, teléfonos y empresas inventados.
 
-`etiquetas_ground_truth.csv` tiene la respuesta correcta de cada CV. Se usa para:
+- **`CVs_ficticios_prueba/` — 20 CVs originales** (14 PDF y 6 Word) con formatos variados a propósito: clásico, dos columnas con foto, creativo, tablas, escaneados, varias páginas con referencias y encabezados poco comunes.
+- **`CVs_sinteticos/` — 200 CVs del dataset ampliado**, creados con `generador/generar_cvs.py` en los mismos 9 formatos, con fechas, encabezados y separadores variados:
+  - **160 de entrenamiento.**
+  - **40 de prueba** que usan empresas, instituciones, títulos y habilidades que **no aparecen** en entrenamiento (92 empresas, 12 instituciones y 42 habilidades nuevas), para medir si el NER generaliza.
+  - No repiten empresas ni instituciones de los 20 originales.
+
+Cada carpeta tiene un `etiquetas_ground_truth.csv` con la respuesta correcta de cada CV. Se usa para:
 - **Generar las anotaciones del NER:** cada valor del CSV se busca en el texto del CV y se marca su posición (no se etiquetó a mano).
 - **Evaluar** el sistema campo por campo.
 
-El NER se entrena con 14 CVs y se evalúa con 6 (uno de cada tipo de formato).
+El primer NER se entrenó con 14 CVs originales y se evaluó con 6 (uno de cada formato). Como los originales repiten las mismas empresas y habilidades, el modelo memorizaba; por eso se amplió el dataset y se reentrenó con los 160 sintéticos más los 14 originales.
 
 ## Resultados
 
-**Campos con reglas (20 CVs)**
+**Campos con reglas (20 CVs originales)**
 
 | Campo | Resultado |
 |---|---|
@@ -49,7 +55,25 @@ El NER se entrena con 14 CVs y se evalúa con 6 (uno de cada tipo de formato).
 | Teléfono | 100% correctos |
 | Años de experiencia | 80% exactos, error promedio de 0.09 años |
 
-**NER ajustado (6 CVs de prueba)**
+En los 200 CVs sintéticos: nombre 99.5%, correo 98.5%, teléfono 100% y error promedio de 0.17 años. Los errores restantes vienen sobre todo del OCR de los escaneados y de fechas que solo traen el año.
+
+**NER reentrenado con el dataset ampliado**
+
+| Conjunto de prueba | Modelo inicial (14 CVs) | Reentrenado (174 CVs) |
+|---|---|---|
+| 40 CVs sintéticos con valores nuevos | F1 0.61 | **F1 0.89** |
+| 6 CVs originales de prueba | F1 0.92 | **F1 0.95** |
+
+Con valores que nunca vio en entrenamiento, el modelo reentrenado encuentra el **79%** (285 de 359); el modelo inicial encontraba 1 de 4.
+
+| Campo (40 sintéticos de prueba) | Precisión | Recall | F1 |
+|---|---|---|---|
+| Empresas | 1.00 | 1.00 | 1.00 |
+| Títulos | 1.00 | 0.99 | 0.99 |
+| Instituciones | 0.82 | 0.82 | 0.82 |
+| Habilidades | 0.93 | 0.68 | 0.79 |
+
+**NER inicial (6 CVs originales de prueba)**
 
 | Campo | Precisión | Recall | F1 |
 |---|---|---|---|
@@ -67,8 +91,8 @@ El NER se entrena con 14 CVs y se evalúa con 6 (uno de cada tipo de formato).
 
 ## Limitaciones
 
-- **El NER memoriza más de lo que generaliza.** Los CVs ficticios repiten las mismas empresas y habilidades: 69 de las 73 entidades de prueba ya aparecían en entrenamiento. Con esas el recall es 0.97, pero con valores nuevos solo encontró 1 de 4. Con CVs reales y más variados el desempeño sería menor.
-- **Pocos datos y ficticios.** 20 CVs alcanzan para demostrar el flujo completo, no para un modelo de producción.
+- **Datos sintéticos.** El dataset ampliado redujo la memorización (recall con valores nuevos de 0.25 a 0.79), pero los CVs siguen siendo generados con plantillas. Los CVs reales tienen más variedad de redacción y formato, así que el desempeño con ellos probablemente sería menor. El siguiente paso es evaluar con CVs reales anonimizados.
+- **Habilidades nuevas.** Es la entidad más difícil: el modelo reentrenado encuentra el 68% de las habilidades de prueba. Las empresas son más fáciles porque casi siempre empiezan con un tipo de negocio conocido ("Grupo", "Distribuidora"...).
 - **Fechas solo con año.** Si el CV dice "2022 - 2026" sin mes, se asume julio; ese error no se puede eliminar.
 - **Errores visibles del NER.** A veces confunde un puesto con una empresa o habilidad (por ejemplo "Auditora Interna") o marca un apellido como habilidad. La app muestra las entidades resaltadas para que el reclutador pueda revisarlas.
 - **Teléfonos.** La expresión regular está pensada para números de Guatemala (`+502 XXXX-XXXX`).
@@ -123,32 +147,43 @@ python3 -m venv .venv
 .venv/bin/streamlit run app.py
 ```
 
-Se abre en http://localhost:8501. Sube uno o varios CVs (puedes probar con los de `CVs_ficticios_prueba/`):
+Se abre en http://localhost:8501. Sube CVs sueltos o **una carpeta completa** (se leen todos los PDF y Word, también de subcarpetas). Puedes probar con `CVs_ficticios_prueba/` o `CVs_sinteticos/`.
 
-- La tabla muestra a los candidatos ordenados por años de experiencia.
-- En la barra lateral se filtra por habilidades requeridas y años mínimos.
-- **Descargar tabla (CSV)** exporta el resultado.
-- **Detalle por candidato** muestra el texto del CV con las entidades que encontró el NER.
+- **Filtros** en la barra lateral: habilidades (por defecto basta con tener **al menos una**; un interruptor permite exigir todas), años mínimos de experiencia y búsqueda por nombre, empresa o título.
+- **Candidatos:** tarjetas con educación, empresas, contacto y habilidades; las que coinciden con el filtro salen en verde.
+- **Tabla comparativa:** ordenada por habilidades buscadas y años de experiencia; **Descargar tabla (CSV)** exporta el resultado.
+- **Resumen:** habilidades más frecuentes y años de experiencia por candidato.
+- **Detalle NER:** el texto de cada CV con las entidades que encontró el modelo, para revisar la extracción.
 
 En la app, "actualidad" se calcula con la fecha de hoy; en el notebook se usa septiembre 2026 para coincidir con el CSV de respuestas.
 
 **Notebook**
 
-`TalentLens.ipynb` recorre todo el proceso con el kernel **Python (TalentLens)**: captura, limpieza, extracción, entrenamiento del NER y evaluación. Al final guarda el modelo en `modelo_ner/`, que es el que usa la app.
+`TalentLens.ipynb` recorre todo el proceso con el kernel **Python (TalentLens)**: captura, limpieza, extracción, entrenamiento del NER, evaluación y, en la sección 5, el reentrenamiento con el dataset ampliado (unos 4 minutos en total). Al final guarda el modelo reentrenado en `modelo_ner/`, que es el que usa la app.
+
+**Generar el dataset ampliado**
+
+```bash
+.venv/bin/python generador/generar_cvs.py --entrenamiento 160 --prueba 40
+```
+
+Usa una semilla fija (`--semilla 2026`), así que vuelve a crear los mismos CVs y respuestas en `CVs_sinteticos/` (solo el ruido de los escaneados cambia un poco).
 
 ## Estructura
 
 ```
 TalentLens/
-├── TalentLens.ipynb         # proceso completo: captura, limpieza, NER y evaluación
+├── TalentLens.ipynb         # proceso completo: captura, limpieza, NER, evaluación y reentrenamiento
 ├── extractor.py             # pipeline usado por la app
 ├── app.py                   # app de Streamlit
-├── modelo_ner/              # NER entrenado (EMPRESA, TITULO, INSTITUCION, HABILIDAD)
+├── modelo_ner/              # NER reentrenado (EMPRESA, TITULO, INSTITUCION, HABILIDAD)
+├── generador/               # generador de CVs sintéticos y su vocabulario
 ├── requirements.txt
-└── CVs_ficticios_prueba/    # 20 CVs de prueba y respuestas correctas
+├── CVs_ficticios_prueba/    # 20 CVs originales y respuestas correctas
+└── CVs_sinteticos/          # 200 CVs del dataset ampliado y respuestas correctas
 ```
 
 ## Próximas versiones
 
+- Evaluar con CVs reales anonimizados.
 - Comparar cada CV con la oferta laboral y calcular un porcentaje de compatibilidad.
-- Entrenar con CVs reales (anonimizados) y más variados para que el NER generalice a empresas y habilidades nuevas.
