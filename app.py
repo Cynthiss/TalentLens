@@ -179,19 +179,24 @@ with tab_tabla:
     tabla = filtrados.drop(columns=['texto']).copy()
     for columna in ['empresas', 'titulos', 'instituciones', 'habilidades']:
         tabla[columna] = tabla[columna].map('; '.join)
+    tabla['coincidencias'] = tabla['coincidencias'].map(lambda n: f'{n} de {len(requeridas_min)}')
     tabla = tabla.rename(columns={
         'archivo': 'Archivo', 'nombre': 'Nombre', 'email': 'Correo', 'telefono': 'Teléfono',
         'anios_experiencia': 'Años de experiencia', 'empresas': 'Empresas', 'titulos': 'Títulos',
-        'instituciones': 'Instituciones', 'habilidades': 'Habilidades', 'coincidencias': 'Coincidencias'})
+        'instituciones': 'Instituciones', 'habilidades': 'Habilidades',
+        'coincidencias': 'Habilidades buscadas'})
     orden = ['Nombre', 'Años de experiencia', 'Habilidades', 'Títulos', 'Instituciones',
              'Empresas', 'Correo', 'Teléfono', 'Archivo']
     if requeridas_min:
-        orden.insert(1, 'Coincidencias')
+        orden.insert(1, 'Habilidades buscadas')
     tabla = tabla[orden]
 
-    st.dataframe(tabla, hide_index=True, use_container_width=True,
-                 column_config={'Años de experiencia': st.column_config.ProgressColumn(
-                     format='%.1f', min_value=0, max_value=max(maximo, 1.0))})
+    st.dataframe(tabla, hide_index=True, use_container_width=True, column_config={
+        'Años de experiencia': st.column_config.ProgressColumn(
+            format='%.1f', min_value=0, max_value=max(maximo, 1.0)),
+        'Habilidades buscadas': st.column_config.TextColumn(
+            help='Cuántas de las habilidades elegidas en el filtro tiene el candidato.'),
+    })
     st.download_button('Descargar tabla (CSV)', tabla.to_csv(index=False).encode('utf-8-sig'),
                        file_name='candidatos_talentlens.csv', mime='text/csv', type='primary')
 
