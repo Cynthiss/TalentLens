@@ -67,12 +67,13 @@ DOMINIOS = r'(gmail|yahoo|outlook|hotmail)\.com'
 
 
 def limpiar_texto(texto):
-    texto = unicodedata.normalize('NFC', texto)
+    # NFKC además separa ligaduras tipográficas de los PDF: "ﬁ" -> "fi", "ﬂ" -> "fl"
+    texto = unicodedata.normalize('NFKC', texto)
     texto = texto.replace('\xa0', ' ').replace('\t', ' ')
     # correos partidos en dos líneas (columnas angostas): "outlook.\ncom"
     texto = re.sub(r'(\S+@\S+)\n([a-z.]{1,4})$', r'\1\2', texto, flags=re.M)
-    # OCR: la @ se lee como "0", "QW" o "GW" -> pedro.xicara890gmail.com
-    texto = re.sub(r'\b([a-z][\w.]*?)[0OQGW]{1,2}' + DOMINIOS, r'\1@\2.com', texto)
+    # OCR: la @ se lee como "0", "QW", "GW" o un espacio -> pedro.xicara890gmail.com, maria.morales300 gmail.com
+    texto = re.sub(r'\b([a-z][\w.]*?)(?:[0OQGW]{1,2} ?| )' + DOMINIOS, r'\1@\2.com', texto)
     lineas = []
     for linea in texto.split('\n'):
         linea = linea.strip().lstrip(VINETAS).strip()  # viñetas al inicio
@@ -120,11 +121,25 @@ def detectar_encabezado(linea):
     return None, linea
 
 
+def unir_encabezados_partidos(lineas):
+    """Une encabezados partidos en dos líneas que solo se reconocen juntos: "PREPARACIÓN\\nACADÉMICA"."""
+    unidas, i = [], 0
+    while i < len(lineas):
+        linea = lineas[i]
+        if i + 1 < len(lineas) and not detectar_encabezado(linea)[0]:
+            juntas = f'{linea} {lineas[i + 1]}'
+            if sin_acentos(juntas).strip(' :') in ENCABEZADOS:
+                linea, i = juntas, i + 1
+        unidas.append(linea)
+        i += 1
+    return unidas
+
+
 def separar_secciones(texto):
     secciones = {'encabezado': []}
     actual = 'encabezado'
     anterior_fue_encabezado = False
-    for linea in texto.split('\n'):
+    for linea in unir_encabezados_partidos(texto.split('\n')):
         primera = sin_acentos(linea.split()[0])
         if anterior_fue_encabezado and primera in CONTINUACION and linea.split()[0].isupper():
             linea = ' '.join(linea.split()[1:])
@@ -165,8 +180,8 @@ def extraer_telefono(texto):
 
 def parece_nombre(linea):
     palabras = linea.split()
-    if not 2 <= len(palabras) <= 6 or any(ch.isdigit() for ch in linea):
-        return False
+    if not 2 <= len(palabras) <= 6 or any(ch.isdigit() or ch in ',;|/:()@·' for ch in linea):
+        return False  # listas como "Meta Ads, SEO, HubSpot" no son nombres
     if detectar_encabezado(linea)[0]:
         return False
     return all(p[0].isupper() or p.lower() in CONECTORES for p in palabras)
@@ -176,16 +191,26 @@ def extraer_nombre(secciones, nlp):
     """Nombre del candidato: línea con forma de nombre que el NER marca como persona."""
     candidatos = []
     posicion = 0
+    todo = '\n'.join(secciones.values()).lower()
     for seccion, texto in secciones.items():
         if seccion in ('referencias', 'experiencia', 'educacion', 'cursos'):
             continue  # aquí aparecen otras personas, empresas o títulos
-        for linea in texto.split('\n'):
+        lineas = texto.split('\n')
+        for i, linea in enumerate(lineas):
             posicion += 1
             if not parece_nombre(linea):
                 continue
+            # nombre en mayúsculas partido por una columna angosta: "VANESSA VILLATORO\nMONROY"
+            siguiente = lineas[i + 1] if i + 1 < len(lineas) else ''
+            # (solo si esa palabra no aparece en otra parte del CV, como pasaría con un puesto: "DOCENTE")
+            if linea.isupper() and siguiente.isupper() and siguiente.isalpha() and \
+                    todo.count(siguiente.lower()) == 1 and not detectar_encabezado(siguiente)[0]:
+                linea = f'{linea} {siguiente}'
             doc = nlp(linea.title() if linea.isupper() else linea)
             es_persona = any(e.label_ == 'PER' and len(e.text) >= 0.8 * len(doc.text) for e in doc.ents)
-            puntaje = 2 * es_persona + (len(linea.split()) >= 3) - 0.1 * posicion
+            # un puesto suele repetirse en el perfil o la experiencia; el nombre aparece una sola vez
+            se_repite = todo.count(linea.lower()) > 1
+            puntaje = 2 * es_persona + (len(linea.split()) >= 3) - 2 * se_repite - 0.1 * posicion
             candidatos.append((puntaje, linea))
     if not candidatos:
         return None
