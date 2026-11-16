@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from spacy import displacy
 
+import compatibilidad
 import extractor
 
 st.set_page_config(page_title='TalentLens', page_icon='🔎', layout='wide')
@@ -12,6 +13,18 @@ st.set_page_config(page_title='TalentLens', page_icon='🔎', layout='wide')
 AZUL = '#121F38'
 VERDE = '#1C7A6B'
 COLORES_NER = {'EMPRESA': '#e4dcf7', 'TITULO': '#dbe7f7', 'INSTITUCION': '#d8efe6', 'HABILIDAD': '#f7dede'}
+MINIMO_COMPATIBLE = 40  # por debajo de este %, ningún puesto se considera compatible
+PUESTOS_EJEMPLO = [
+    {'nombre': 'Analista de Datos',
+     'oferta': 'Buscamos Analista de Datos con al menos 3 años de experiencia. Requisitos: Python, SQL, '
+               'Power BI y Estadística. Construirás tableros de indicadores, modelos de pronóstico de ventas '
+               'y automatización de reportes para gerencia. Licenciatura en Estadística, Ingeniería en '
+               'Sistemas o carrera afín.'},
+    {'nombre': 'Desarrollador Backend',
+     'oferta': 'Empresa de tecnología busca Desarrollador Backend con mínimo 2 años de experiencia. '
+               'Conocimientos en Python o Java, Docker, AWS, PostgreSQL y REST APIs. Desarrollo de '
+               'servicios en la nube, migración de sistemas y revisión de código.'},
+]
 
 st.html(f"""
 <style>
@@ -117,6 +130,16 @@ with st.sidebar:
     minimo_anios = st.slider('Años de experiencia mínimos', 0.0, max(maximo, 1.0), 0.0, 0.5)
     busqueda = st.text_input('Buscar', placeholder='Nombre, empresa, título...')
 
+    st.header('Compatibilidad')
+    st.caption('Cuánto pesa cada parte en el % de compatibilidad con un puesto.')
+    pesos = {
+        'habilidades': st.slider('Habilidades requeridas', 0, 100, 50, 5, format='%d%%'),
+        'experiencia': st.slider('Años de experiencia', 0, 100, 20, 5, format='%d%%'),
+        'similitud': st.slider('Similitud con la oferta (TF-IDF)', 0, 100, 30, 5, format='%d%%'),
+    }
+    if sum(pesos.values()) == 0:
+        pesos = dict(compatibilidad.PESOS)
+
 requeridas_min = [r.lower() for r in requeridas]
 
 
@@ -151,8 +174,8 @@ if filtrados.empty:
     st.info('Ningún candidato cumple los filtros. Prueba quitando alguna condición.')
     st.stop()
 
-tab_tarjetas, tab_tabla, tab_resumen, tab_detalle = st.tabs(
-    ['Candidatos', 'Tabla comparativa', 'Resumen', 'Detalle NER'])
+tab_tarjetas, tab_compatibilidad, tab_tabla, tab_resumen, tab_detalle = st.tabs(
+    ['Candidatos', 'Compatibilidad con puestos', 'Tabla comparativa', 'Resumen', 'Detalle NER'])
 
 with tab_tarjetas:
     columnas = st.columns(2)
@@ -175,6 +198,110 @@ with tab_tarjetas:
                 st.markdown(badges(fila['habilidades'], requeridas))
             st.caption(f"📄 {fila['archivo']}")
 
+with tab_compatibilidad:
+    st.session_state.setdefault('puestos', [])
+    st.session_state.setdefault('siguiente_id', 0)
+    puestos = st.session_state['puestos']
+
+    def agregar_puesto(nombre, oferta):
+        puestos.append({'id': st.session_state['siguiente_id'], 'nombre': nombre.strip(), 'oferta': oferta.strip()})
+        st.session_state['siguiente_id'] += 1
+
+    st.write('Agrega los puestos que necesitas cubrir pegando la descripción de la oferta. '
+             'TalentLens saca las habilidades y los años que pide, y calcula qué tan compatible es cada CV.')
+    with st.form('nuevo_puesto', clear_on_submit=True, border=True):
+        c1, c2 = st.columns([1, 2])
+        nombre_puesto = c1.text_input('Nombre del puesto', placeholder='Ej. Analista de Datos')
+        oferta_puesto = c2.text_area('Descripción de la oferta', height=110,
+                                     placeholder='Pega aquí el anuncio: requisitos, funciones, años de experiencia...')
+        if st.form_submit_button('Agregar puesto', type='primary'):
+            if nombre_puesto.strip() and oferta_puesto.strip():
+                agregar_puesto(nombre_puesto, oferta_puesto)
+            else:
+                st.warning('Escribe el nombre del puesto y la descripción de la oferta.')
+
+    if not puestos:
+        st.info('Todavía no hay puestos. Agrega uno arriba o prueba con dos puestos de ejemplo.')
+        if st.button('Cargar puestos de ejemplo'):
+            for ejemplo in PUESTOS_EJEMPLO:
+                agregar_puesto(ejemplo['nombre'], ejemplo['oferta'])
+            st.rerun()
+    else:
+        _, ner_cv = cargar_modelos()
+        conocidas = list(escrituras.values())
+
+        # Requisitos de cada puesto (sacados de la oferta y editables)
+        st.markdown('##### Requisitos de cada puesto')
+        for puesto in list(puestos):
+            clave = puesto['id']
+            sugeridas, anios_sugeridos = compatibilidad.requisitos_de_oferta(puesto['oferta'], ner_cv, conocidas)
+            with st.expander(f"{puesto['nombre']}", expanded=False):
+                st.caption(puesto['oferta'])
+                puesto['requeridas'] = st.multiselect(
+                    'Habilidades requeridas', sorted(set(conocidas) | set(sugeridas), key=str.lower),
+                    default=sugeridas, key=f'requeridas_{clave}', accept_new_options=True,
+                    help='Se sacaron de la oferta. Puedes quitar o agregar habilidades.')
+                c1, c2 = st.columns([1, 1])
+                puesto['anios'] = c1.number_input('Años mínimos de experiencia', 0, 40, anios_sugeridos,
+                                                  key=f'anios_{clave}')
+                if c2.button('Quitar puesto', key=f'quitar_{clave}'):
+                    puestos.remove(puesto)
+                    st.rerun()
+
+        # Porcentaje de cada candidato con cada puesto
+        similitud = compatibilidad.similitudes([p['oferta'] for p in puestos], filtrados['texto'])
+        resultados_puestos = {}
+        for i, puesto in enumerate(puestos):
+            resultados_puestos[puesto['id']] = [
+                compatibilidad.compatibilidad(fila, puesto['requeridas'], puesto['anios'], similitud[i][j], pesos)
+                for j, (_, fila) in enumerate(filtrados.iterrows())]
+
+        nombres_columna = {}
+        for puesto in puestos:  # nombres de columna únicos aunque dos puestos se llamen igual
+            nombre = puesto['nombre']
+            while nombre in nombres_columna.values():
+                nombre += ' (2)'
+            nombres_columna[puesto['id']] = nombre
+
+        matriz = pd.DataFrame({'Candidato': filtrados['nombre'].values})
+        for puesto in puestos:
+            matriz[nombres_columna[puesto['id']]] = [r['porcentaje'] for r in resultados_puestos[puesto['id']]]
+        columnas_puestos = list(nombres_columna.values())
+        matriz['Mejor %'] = matriz[columnas_puestos].max(axis=1)
+        matriz['Puesto más compatible'] = matriz[columnas_puestos].idxmax(axis=1).where(
+            matriz['Mejor %'] >= MINIMO_COMPATIBLE, f'Ninguno (menos de {MINIMO_COMPATIBLE}%)')
+        matriz = matriz[['Candidato', 'Puesto más compatible', 'Mejor %'] + columnas_puestos]
+        matriz = matriz.sort_values('Mejor %', ascending=False)
+
+        st.markdown('##### ¿Para qué puesto encaja cada candidato?')
+        configuracion = {c: st.column_config.ProgressColumn(c, format='%.0f%%', min_value=0, max_value=100)
+                         for c in columnas_puestos + ['Mejor %']}
+        st.dataframe(matriz, hide_index=True, width='stretch', column_config=configuracion)
+        st.download_button('Descargar compatibilidad (CSV)', matriz.to_csv(index=False).encode('utf-8-sig'),
+                           file_name='compatibilidad_talentlens.csv', mime='text/csv')
+
+        # Ranking por puesto
+        st.markdown('##### Ranking por puesto')
+        for tab_puesto, puesto in zip(st.tabs([nombres_columna[p['id']] for p in puestos]), puestos):
+            with tab_puesto:
+                ranking = sorted(zip(resultados_puestos[puesto['id']], filtrados.itertuples()),
+                                 key=lambda par: -par[0]['porcentaje'])
+                requisito = f"{len(puesto['requeridas'])} habilidades requeridas · {puesto['anios']} años mínimos"
+                st.caption(requisito)
+                for resultado, fila in ranking:
+                    with st.container(border=True):
+                        izquierda, derecha = st.columns([4, 1])
+                        izquierda.markdown(f"**{fila.nombre}** · {fila.anios_experiencia:.1f} años de experiencia")
+                        derecha.markdown(f"### {resultado['porcentaje']:.0f}%")
+                        st.progress(resultado['porcentaje'] / 100)
+                        partes = resultado['partes']
+                        st.caption(f"Habilidades {partes['habilidades']:.0%} · Experiencia {partes['experiencia']:.0%}"
+                                   f" · Similitud con la oferta {partes['similitud']:.0%}")
+                        etiquetas = ' '.join([f':green-badge[✓ {h}]' for h in resultado['tiene']] +
+                                             [f':red-badge[✗ {h}]' for h in resultado['faltan']])
+                        if etiquetas:
+                            st.markdown(etiquetas)
+
 with tab_tabla:
     tabla = filtrados.drop(columns=['texto']).copy()
     for columna in ['empresas', 'titulos', 'instituciones', 'habilidades']:
@@ -191,7 +318,7 @@ with tab_tabla:
         orden.insert(1, 'Habilidades buscadas')
     tabla = tabla[orden]
 
-    st.dataframe(tabla, hide_index=True, use_container_width=True, column_config={
+    st.dataframe(tabla, hide_index=True, width='stretch', column_config={
         'Años de experiencia': st.column_config.ProgressColumn(
             format='%.1f', min_value=0, max_value=max(maximo, 1.0)),
         'Habilidades buscadas': st.column_config.TextColumn(
@@ -211,7 +338,7 @@ with tab_resumen:
             x=alt.X('Candidatos:Q', axis=alt.Axis(tickMinStep=1, grid=True, gridOpacity=0.4)),
             y=alt.Y('Habilidad:N', sort='-x', title=None, axis=alt.Axis(labelLimit=200)),
             tooltip=['Habilidad', 'Candidatos']),
-        use_container_width=True)
+        width='stretch')
 
     experiencia = filtrados[['nombre', 'anios_experiencia']].rename(
         columns={'nombre': 'Candidato', 'anios_experiencia': 'Años'})
@@ -221,7 +348,7 @@ with tab_resumen:
             x=alt.X('Años:Q', axis=alt.Axis(grid=True, gridOpacity=0.4)),
             y=alt.Y('Candidato:N', sort='-x', title=None, axis=alt.Axis(labelLimit=260)),
             tooltip=['Candidato', alt.Tooltip('Años:Q', format='.1f')]),
-        use_container_width=True)
+        width='stretch')
 
 with tab_detalle:
     st.write('Texto de cada CV con las entidades que encontró el modelo NER. '
