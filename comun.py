@@ -15,7 +15,9 @@ ARCHIVO_PUESTOS = CARPETA / 'puestos.json'
 AZUL = '#121F38'
 VERDE = '#1C7A6B'
 COLORES_NER = {'EMPRESA': '#e4dcf7', 'TITULO': '#dbe7f7', 'INSTITUCION': '#d8efe6', 'HABILIDAD': '#f7dede'}
-MINIMO_COMPATIBLE = 40  # por debajo de este %, ningún puesto se considera compatible
+# por debajo de este %, ningún puesto se considera compatible. En los CVs de prueba, los de la misma
+# profesión sacan 21% o más y los de otras profesiones 17% o menos.
+MINIMO_COMPATIBLE = 30
 PESOS_INICIALES = {'habilidades': 50, 'experiencia': 20, 'similitud': 30}
 
 ESTILOS = f"""

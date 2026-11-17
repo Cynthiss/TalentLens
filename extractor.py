@@ -424,6 +424,9 @@ def empresas_por_estructura(experiencia, conocidas=(), habilidades=()):
         sociedad = RE_SOCIEDAD.search(linea) is not None
         if linea.endswith('.') and not sociedad:
             continue  # final de una oración
+        importantes = [w for w in palabras if w.lower() not in MINUSCULAS]
+        if not sociedad and sum(w[0].isupper() for w in importantes) < 0.6 * len(importantes):
+            continue  # tarea en minúsculas, "Planificación de rutas de entrega"; una empresa va con mayúsculas
         anterior = lineas[i - 1] if i > 0 else ''
         siguiente = lineas[i + 1] if i + 1 < len(lineas) else ''
         if anterior.endswith(('-', ',')) or tiene_empresa(anterior) or tiene_empresa(siguiente):

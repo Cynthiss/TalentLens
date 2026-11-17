@@ -2,7 +2,8 @@
 
 El porcentaje combina tres partes:
 - Habilidades: cuántas de las habilidades requeridas tiene el candidato.
-- Experiencia: sus años frente a los años mínimos del puesto.
+- Experiencia: sus años frente a los años mínimos del puesto, multiplicado por qué tan relacionado
+  está el perfil (la mayor entre habilidades y similitud).
 - Similitud del texto: TF-IDF + similitud coseno entre la oferta y el CV completo.
 """
 import re
@@ -67,9 +68,13 @@ def compatibilidad(candidato, requeridas, anios_minimos, similitud, pesos=PESOS)
     tiene = [h for h in requeridas if h.lower() in propias or contiene(candidato['texto'], h)]
     faltan = [h for h in requeridas if h not in tiene]
 
+    habilidades = len(tiene) / len(requeridas) if requeridas else 1.0
+    anios = min(candidato['anios_experiencia'] / anios_minimos, 1.0) if anios_minimos else 1.0
     partes = {
-        'habilidades': len(tiene) / len(requeridas) if requeridas else 1.0,
-        'experiencia': min(candidato['anios_experiencia'] / anios_minimos, 1.0) if anios_minimos else 1.0,
+        'habilidades': habilidades,
+        # los años solo cuentan en la medida en que el perfil se relaciona con el puesto (por sus
+        # habilidades o por el texto): muchos años en otra área no hacen compatible a nadie
+        'experiencia': anios * max(habilidades, float(similitud)),
         'similitud': float(similitud),
     }
     total = sum(pesos.values()) or 1

@@ -108,7 +108,8 @@ with st.expander('¿Cómo se calcula el % de compatibilidad?'):
 El % de un candidato con un puesto combina tres partes:
 
 - **Habilidades:** cuántas de las habilidades requeridas tiene el candidato.
-- **Experiencia:** sus años frente a los años mínimos del puesto (100% si los cumple o supera).
+- **Experiencia:** sus años frente a los años mínimos del puesto (100% si los cumple o supera), multiplicado por
+  qué tan relacionado está su perfil (el mayor entre habilidades y similitud): los años en otra área no cuentan.
 - **Similitud con la oferta:** qué tanto se parece el texto del CV al de la oferta, con **TF-IDF y similitud coseno**.
   Capta palabras que no son habilidades, como funciones o sector.
 
