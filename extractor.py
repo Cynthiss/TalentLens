@@ -368,14 +368,42 @@ def es_ruido(valor, etiqueta, nombre):
     return etiqueta in ('EMPRESA', 'HABILIDAD') and RE_NO_EMPRESA.match(valor) is not None
 
 
+def partes_de_entidad(texto, inicio, fin, etiqueta):
+    """Una habilidad que cruza un salto de línea suele ser dos elementos de una lista
+    ("Responsabilidad\nMultitasking"), salvo que la línea termine en un conector ("clientes y\npersonal")."""
+    if etiqueta != 'HABILIDAD':
+        return [(inicio, fin)]
+    partes, desde = [], inicio
+    for i in range(inicio, fin):
+        if texto[i] == '\n' and not continua(texto[desde:i], texto[i + 1:fin]):
+            partes.append((desde, i))
+            desde = i + 1
+        elif texto[i - 1:i + 2] in (' · ', ' / ', ' | '):  # "Snowflake · Databricks"
+            partes.append((desde, i - 1))
+            desde = i + 2
+    return [(a, b) for a, b in partes + [(desde, fin)] if b > a]
+
+
+def continua(linea, siguiente):
+    """¿La siguiente línea es la continuación de un mismo elemento partido por una columna angosta?
+    "Trato efectivo con clientes y\npersonal", "Soporte vital\navanzado", "Control\nde infecciones"."""
+    palabras, despues = linea.split(), siguiente.split()
+    if not palabras or not despues:
+        return False
+    return (palabras[-1].lower() in MINUSCULAS or linea.rstrip().endswith(',')
+            or despues[0][0].islower() or despues[0].lower() in MINUSCULAS)
+
+
 def spans_entidades(texto, ner_cv, nombre=None):
     """(inicio, fin, etiqueta, valor) de cada entidad del NER que no es ruido."""
-    for e in ner_cv(texto_para_ner(texto)).ents:
-        valor = ' '.join(e.text.split()).strip(' ,;:')  # une saltos de línea
-        if valor.count('(') != valor.count(')'):
-            valor = valor.strip('()').strip()  # paréntesis sueltos: "PowerPoint)"
-        if not es_ruido(valor, e.label_, nombre):
-            yield e.start_char, e.end_char, e.label_, valor
+    para_ner = texto_para_ner(texto)
+    for e in ner_cv(para_ner).ents:
+        for inicio, fin in partes_de_entidad(texto, e.start_char, e.end_char, e.label_):
+            valor = ' '.join(para_ner[inicio:fin].split()).strip(' ,;:')  # une saltos de línea
+            if valor.count('(') != valor.count(')'):
+                valor = valor.strip('()').strip()  # paréntesis sueltos: "PowerPoint)"
+            if valor and not es_ruido(valor, e.label_, nombre):
+                yield inicio, fin, e.label_, valor
 
 
 def extraer_entidades(texto, ner_cv, nombre=None):
@@ -398,11 +426,13 @@ def entidades_para_mostrar(resultado, ner_cv):
     nombre = resultado['nombre'] if isinstance(resultado['nombre'], str) else None
     spans = [(i, f, etiqueta) for i, f, etiqueta, valor in spans_entidades(texto, ner_cv, nombre)
              if etiqueta != 'EMPRESA' or valor.lower() in empresas]
-    for empresa in resultado['empresas']:
-        patron = r'\s+'.join(map(re.escape, empresa.split()))
-        for m in re.finditer(patron, texto, flags=re.I):
+    # empresas por estructura y habilidades de la lista de la sección
+    agregadas = [(e, 'EMPRESA') for e in resultado['empresas']] + [(h, 'HABILIDAD') for h in resultado['habilidades']]
+    for valor, etiqueta in agregadas:
+        patron = r'\s+'.join(map(re.escape, valor.split()))
+        for m in re.finditer(rf'(?<!\w){patron}(?!\w)', texto, flags=re.I):
             if not any(i < m.end() and m.start() < f for i, f, _ in spans):
-                spans.append((m.start(), m.end(), 'EMPRESA'))
+                spans.append((m.start(), m.end(), etiqueta))
     return sorted(spans)
 
 
@@ -479,6 +509,68 @@ def empresas_por_estructura(experiencia, conocidas=(), habilidades=()):
     return empresas
 
 
+NIVELES = {'nativo', 'nativa', 'basico', 'basica', 'intermedio', 'intermedia', 'avanzado', 'avanzada',
+           'principiante', 'experto', 'experta', 'alto', 'medio', 'bajo', 'a1', 'a2', 'b1', 'b2', 'c1', 'c2'}
+IDIOMAS = {'espanol', 'ingles', 'aleman', 'frances', 'portugues', 'italiano', 'chino', 'mandarin', 'japones',
+           'coreano', 'kaqchikel', "k'iche'", 'kiche', 'qeqchi', "q'eqchi'", 'idioma'}
+# subtítulos dentro de la sección de habilidades: no son habilidades
+CATEGORIAS = {'sistemas operativos', 'control de versiones', 'lenguajes de programacion', 'lenguajes',
+              'herramientas', 'herramientas ofimaticas', 'bases de datos', 'habilidades blandas',
+              'habilidades tecnicas', 'habilidades', 'soft skills', 'hard skills', 'software', 'otros',
+              'conocimientos', 'tecnologias', 'frameworks', 'idiomas'}
+
+
+def separar_items(linea):
+    """Parte una línea por comas, punto y coma, "·" o "|", sin cortar dentro de paréntesis."""
+    items, actual, nivel = [], '', 0
+    for ch in linea.replace(' / ', '|'):
+        nivel += (ch == '(') - (ch == ')')
+        if ch in ',;·|' and nivel == 0:
+            items.append(actual)
+            actual = ''
+        else:
+            actual += ch
+    return [i.strip(' .:/') for i in items + [actual]]
+
+
+def habilidades_de_lista(seccion):
+    """Elementos cortos de la lista de la sección de habilidades. El NER reconoce bien las
+    técnicas (Python, SQL), pero se le escapan las blandas: "Trabajo bajo presión", "Multitasking"."""
+    lineas = []
+    for linea in seccion.split('\n'):
+        if lineas and continua(lineas[-1], linea):
+            lineas[-1] = f'{lineas[-1]} {linea}'  # elemento partido en dos líneas
+        else:
+            lineas.append(linea)
+    habilidades = []
+    for linea in lineas:
+        if linea.endswith(':'):
+            continue  # subtítulo, "Lenguajes:"
+        for item in separar_items(linea):
+            if not item or len(item) < 2 or len(item.split()) > 6 or not item[0].isalnum():
+                continue
+            clave = sin_acentos(item)
+            if clave in NIVELES or clave.split()[0] in IDIOMAS or clave in CATEGORIAS:
+                continue
+            if re.fullmatch(r'[\d\s.%/-]+', item):
+                continue
+            habilidades.append(item)
+    return habilidades
+
+
+def unir_habilidades(del_ner, secciones):
+    """Habilidades del NER más las de la lista de la sección que no encontró."""
+    habilidades = [h for h in del_ner if sin_acentos(h) not in NIVELES and not sin_acentos(h).startswith('nivel ')]
+    for h in habilidades_de_lista(secciones.get('habilidades', '')):
+        clave = sin_acentos(h)
+        if clave in {sin_acentos(x) for x in habilidades}:
+            continue
+        # el NER tomó solo una parte del elemento: "Aprendizaje y Adaptabilidad" de "Rápido Aprendizaje y Adaptabilidad"
+        partes = [x for x in habilidades if len(x.split()) >= 2 and re.search(rf'(?<!\w){re.escape(sin_acentos(x))}(?!\w)', clave)]
+        habilidades = [x for x in habilidades if x not in partes] + [h]
+    return habilidades
+
+
 def unir_empresas(del_ner, secciones, habilidades=()):
     """Empresas del NER que están en la experiencia (las de cursos o certificados son quienes
     los imparten, no empleadores) más las encontradas por la estructura de la sección."""
@@ -507,6 +599,6 @@ def procesar_cv(datos, nombre_archivo, nlp, ner_cv):
         'empresas': unir_empresas(entidades['EMPRESA'], secciones, entidades['HABILIDAD']),
         'titulos': entidades['TITULO'],
         'instituciones': entidades['INSTITUCION'],
-        'habilidades': entidades['HABILIDAD'],
+        'habilidades': unir_habilidades(entidades['HABILIDAD'], secciones),
         'texto': texto,
     }
