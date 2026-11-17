@@ -2,7 +2,7 @@
 
 Extracción inteligente de información de CVs para agilizar la preselección de candidatos.
 
-El reclutador sube uno o varios CVs en PDF o Word y obtiene una **tabla comparativa** con la información clave de cada candidato, extraída automáticamente con PLN: nombre, contacto, años de experiencia, empresas, educación y habilidades.
+El reclutador define los **puestos** que tiene abiertos, sube uno o varios CVs en PDF o Word y obtiene una **tabla comparativa** con la información clave de cada candidato, extraída automáticamente con PLN (nombre, contacto, años de experiencia, empresas, educación y habilidades), junto con su **% de compatibilidad con cada puesto**.
 
 > TalentLens no reemplaza al reclutador: ordena la información para acelerar la revisión inicial.
 
@@ -15,7 +15,7 @@ Una oferta de empleo recibe en promedio unos 250 CVs y el primer vistazo de un r
 ## Cómo funciona
 
 ```
-CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción → Tabla comparativa
+CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción → Compatibilidad con los puestos → Tabla comparativa
 ```
 
 1. **Captura.** Texto de PDF con `pymupdf` y de Word con `python-docx` (incluyendo tablas). Si una página no tiene texto (CV escaneado) se lee con OCR (`pytesseract`, español).
@@ -26,7 +26,13 @@ CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción 
    - **Nombre:** NER preentrenado de spaCy (`es_core_news_sm`) + reglas, ignorando las secciones donde aparecen otras personas (referencias).
    - **Años de experiencia:** lectura de rangos de fechas en cuatro formatos (`mar 2021`, `03/2021`, `Marzo de 2021`, `2021`), sin contar dos veces los periodos que se traslapan.
    - **Empresas, títulos, instituciones y habilidades:** NER de spaCy **entrenado con etiquetas propias** (`EMPRESA`, `TITULO`, `INSTITUCION`, `HABILIDAD`).
-5. **Producto.** App de Streamlit con tabla comparativa, filtros y descarga en CSV.
+5. **Compatibilidad con los puestos.** De la oferta de cada puesto se sacan las habilidades requeridas (NER + habilidades conocidas escritas en la oferta) y los años mínimos ("al menos 3 años de experiencia"). El % de cada candidato combina tres partes, con pesos ajustables:
+   - **Habilidades (50%):** cuántas de las requeridas tiene; cuenta si el NER la encontró o si aparece escrita en el CV.
+   - **Experiencia (20%):** sus años frente a los mínimos (100% si los cumple).
+   - **Similitud con la oferta (30%):** TF-IDF + similitud coseno entre el texto del CV y la oferta; capta funciones y sector aunque no sean habilidades. Una similitud de 0.35 cuenta como 100%.
+
+   Cada candidato se asigna al puesto con el que tiene mayor %, solo si llega al **40%**; si no, queda **sin puesto**.
+6. **Producto.** App de Streamlit con dos páginas (Puestos y Candidatos), clasificación por puesto, filtros y descarga en CSV.
 
 ## Datos
 
@@ -66,6 +72,10 @@ En los 200 CVs sintéticos: nombre 99.5%, correo 98.5%, teléfono 100% y error p
 
 Con valores que nunca vio en entrenamiento, el modelo reentrenado encuentra el **79%** (285 de 359); el modelo inicial encontraba 1 de 4.
 
+**Clasificación por puesto (40 CVs sintéticos de prueba)**
+
+Con tres puestos de ejemplo (Analista de Datos, Desarrollador Backend y Contador General), la app asignó 6, 4 y 6 candidatos; según su profesión real eran 6, 4 y 5. Los otros 24 CVs, de profesiones distintas (marketing, recursos humanos, docencia...), quedaron **sin puesto** porque ninguno llegó al 40%.
+
 | Campo (40 sintéticos de prueba) | Precisión | Recall | F1 |
 |---|---|---|---|
 | Empresas | 1.00 | 1.00 | 1.00 |
@@ -95,6 +105,7 @@ Con valores que nunca vio en entrenamiento, el modelo reentrenado encuentra el *
 - **Habilidades nuevas.** Es la entidad más difícil: el modelo reentrenado encuentra el 68% de las habilidades de prueba. Las empresas son más fáciles porque casi siempre empiezan con un tipo de negocio conocido ("Grupo", "Distribuidora"...).
 - **Fechas solo con año.** Si el CV dice "2022 - 2026" sin mes, se asume julio; ese error no se puede eliminar.
 - **Errores visibles del NER.** A veces confunde un puesto con una empresa o habilidad (por ejemplo "Auditora Interna") o marca un apellido como habilidad. La app muestra las entidades resaltadas para que el reclutador pueda revisarlas.
+- **Compatibilidad.** La escala de similitud (0.35 = 100%) y el umbral de 40% se calibraron con los CVs sintéticos; con CVs reales habría que revisarlos. El % no mide la calidad de la experiencia, solo qué tanto coincide el CV con la oferta.
 - **Teléfonos.** La expresión regular está pensada para números de Guatemala (`+502 XXXX-XXXX`).
 
 ## Instalación
@@ -147,11 +158,19 @@ python3 -m venv .venv
 .venv/bin/streamlit run app.py
 ```
 
-Se abre en http://localhost:8501. Sube CVs sueltos o **una carpeta completa** (se leen todos los PDF y Word, también de subcarpetas). Puedes probar con `CVs_ficticios_prueba/` o `CVs_sinteticos/`.
+Se abre en http://localhost:8501 con dos páginas en el menú lateral.
 
-- **Filtros** en la barra lateral: habilidades (por defecto basta con tener **al menos una**; un interruptor permite exigir todas), años mínimos de experiencia y búsqueda por nombre, empresa o título.
-- **Candidatos:** tarjetas con educación, empresas, contacto y habilidades; las que coinciden con el filtro salen en verde.
-- **Tabla comparativa:** ordenada por habilidades buscadas y años de experiencia; **Descargar tabla (CSV)** exporta el resultado.
+**1. Puestos:** los puestos que tienes abiertos.
+- **Agregar un puesto:** escribe el nombre, pega la oferta de empleo y presiona **Analizar oferta**. TalentLens detecta las habilidades y los años mínimos; puedes quitar o escribir habilidades antes de **Guardar puesto**.
+- **Puestos guardados:** cada puesto muestra sus requisitos y se puede ver la oferta, editar o eliminar.
+- **¿Cómo se calcula el % de compatibilidad?:** explica el cálculo y permite cambiar el peso de cada parte.
+- Los puestos y los pesos se guardan en `puestos.json`, así que siguen ahí al volver a abrir la app. El repo incluye tres puestos de ejemplo.
+
+**2. Candidatos:** sube CVs sueltos o **una carpeta completa** (se leen todos los PDF y Word, también de subcarpetas). Puedes probar con `CVs_ficticios_prueba/` o `CVs_sinteticos/`. Los CVs subidos se conservan al cambiar de página.
+- **Filtros** en la barra lateral: puesto, compatibilidad mínima y, en **Más filtros**, habilidades (basta con tener **al menos una**), años mínimos de experiencia y búsqueda por nombre, empresa o título.
+- **Clasificación por puesto:** cuántos candidatos encajan en cada puesto, una tabla con el % de cada candidato para cada puesto (descargable en CSV) y el ranking de cada puesto con las habilidades que tiene ✓ y las que le faltan ✗.
+- **Candidatos:** tarjetas con educación, empresas, contacto, habilidades y su puesto más compatible.
+- **Tabla comparativa:** toda la información extraída más el puesto más compatible y su %; **Descargar tabla (CSV)** exporta el resultado.
 - **Resumen:** habilidades más frecuentes y años de experiencia por candidato.
 - **Detalle NER:** el texto de cada CV con las entidades que encontró el modelo, para revisar la extracción.
 
@@ -175,7 +194,11 @@ Usa una semilla fija (`--semilla 2026`), así que vuelve a crear los mismos CVs 
 TalentLens/
 ├── TalentLens.ipynb         # proceso completo: captura, limpieza, NER, evaluación y reentrenamiento
 ├── extractor.py             # pipeline usado por la app
-├── app.py                   # app de Streamlit
+├── app.py                   # app de Streamlit (menú con las dos páginas)
+├── paginas/                 # candidatos.py y puestos.py
+├── comun.py                 # piezas compartidas: modelos, puestos guardados y cálculo de compatibilidad
+├── compatibilidad.py        # requisitos de una oferta y % de compatibilidad CV-puesto
+├── puestos.json             # puestos disponibles y pesos del cálculo
 ├── modelo_ner/              # NER reentrenado (EMPRESA, TITULO, INSTITUCION, HABILIDAD)
 ├── generador/               # generador de CVs sintéticos y su vocabulario
 ├── requirements.txt
@@ -186,4 +209,4 @@ TalentLens/
 ## Próximas versiones
 
 - Evaluar con CVs reales anonimizados.
-- Comparar cada CV con la oferta laboral y calcular un porcentaje de compatibilidad.
+- Calibrar la escala de similitud y el umbral de 40% con CVs y ofertas reales.
