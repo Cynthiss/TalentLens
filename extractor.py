@@ -381,6 +381,73 @@ def texto_para_ner(texto):
     return '\n'.join(lineas)
 
 
+RE_SOCIEDAD = re.compile(r'\b(s\.?\s?a\.?|corp\.?|inc\.?|ltda\.?|s\.?a\.?s\.?|llc|group)$', re.I)
+# primera palabra de una línea que es un puesto y no una empresa
+PUESTOS = {'analista', 'asistente', 'auxiliar', 'coordinador', 'coordinadora', 'subcoordinador', 'subcoordinadora',
+           'gerente', 'director', 'directora', 'jefe', 'jefa', 'supervisor', 'supervisora', 'especialista',
+           'desarrollador', 'desarrolladora', 'ingeniero', 'ingeniera', 'consultor', 'consultora', 'contador',
+           'contadora', 'docente', 'maestro', 'maestra', 'encargado', 'encargada', 'ejecutivo', 'ejecutiva',
+           'practicante', 'pasante', 'intern', 'internship', 'apprentice', 'trainee', 'representante', 'agente',
+           'tecnico', 'tecnica', 'administrador', 'administradora', 'vendedor', 'vendedora', 'operador',
+           'operadora', 'cajero', 'cajera', 'recepcionista', 'disenador', 'disenadora', 'community', 'voluntario',
+           'voluntaria', 'miembro', 'lider', 'senior', 'junior', 'licenciatura', 'ingenieria', 'bachillerato',
+           'enfermero', 'enfermera', 'cientifico', 'cientifica', 'auditor', 'auditora', 'medico', 'medica',
+           'abogado', 'abogada', 'psicologo', 'psicologa', 'arquitecto', 'arquitecta', 'programador',
+           'programadora', 'secretario', 'secretaria', 'oficial', 'promotor', 'promotora', 'mesero', 'mesera'}
+
+
+def es_fecha(linea):
+    return RE_RANGO.search(linea.lower()) is not None
+
+
+def empresas_por_estructura(experiencia, conocidas=(), habilidades=()):
+    """Empresas que el NER no reconoce, por su lugar en la sección de experiencia:
+    la línea corta justo antes del puesto con fechas o de las fechas ("Vana Tech S.A." /
+    "Market Research Specialist | Ene 2026 - actualidad"), o una línea con forma de sociedad ("MUNDO TRAVEL CORP.")."""
+    lineas = experiencia.split('\n')
+    habilidades = {sin_acentos(h) for h in habilidades}
+
+    def tiene_empresa(linea):
+        return any(e.lower() in linea.lower() for e in conocidas)
+
+    empresas = []
+    for i, linea in enumerate(lineas):
+        palabras = linea.split()
+        if not 1 <= len(palabras) <= 6 or len(linea) > 50 or not linea[0].isupper():
+            continue
+        if '|' in linea or es_fecha(linea) or re.search(r'\b(19|20)\d\d\b', linea):
+            continue
+        if sin_acentos(palabras[0]).strip('.,') in PUESTOS or detectar_encabezado(linea)[0]:
+            continue
+        if sin_acentos(linea) in habilidades or tiene_empresa(linea):
+            continue
+        sociedad = RE_SOCIEDAD.search(linea) is not None
+        if linea.endswith('.') and not sociedad:
+            continue  # final de una oración
+        anterior = lineas[i - 1] if i > 0 else ''
+        siguiente = lineas[i + 1] if i + 1 < len(lineas) else ''
+        if anterior.endswith(('-', ',')) or tiene_empresa(anterior) or tiene_empresa(siguiente):
+            continue  # ciudad que sigue a la empresa ("Financiera Acatenango -\nEscuintla") o puesto antes de ella
+        # la línea anterior no puede ser solo fechas: entonces esta línea es el puesto ("Apprentice - B2C Postpaid")
+        antes_de_fechas = es_fecha(siguiente) and not (anterior and es_fecha(anterior) and len(anterior) < 40)
+        if sociedad or antes_de_fechas:
+            empresas.append(linea.title() if linea.isupper() else linea)
+    return empresas
+
+
+def unir_empresas(del_ner, secciones, habilidades=()):
+    """Empresas del NER que están en la experiencia (las de cursos o certificados son quienes
+    los imparten, no empleadores) más las encontradas por la estructura de la sección."""
+    experiencia = secciones.get('experiencia', '')
+    plano = ' '.join(experiencia.split()).lower()
+    empresas = [e for e in del_ner if e.lower() in plano and sin_acentos(e.split()[0]) not in PUESTOS]
+    for e in empresas_por_estructura(experiencia, del_ner, habilidades):
+        clave = sin_acentos(e)
+        if not any(clave in sin_acentos(x) or sin_acentos(x) in clave for x in empresas):
+            empresas.append(e)
+    return empresas
+
+
 def procesar_cv(datos, nombre_archivo, nlp, ner_cv):
     """Pipeline completo para un CV: devuelve un diccionario con los campos extraídos."""
     texto = limpiar_texto(leer_cv(datos, nombre_archivo))
@@ -393,7 +460,7 @@ def procesar_cv(datos, nombre_archivo, nlp, ner_cv):
         'email': extraer_email(texto),
         'telefono': extraer_telefono(texto),
         'anios_experiencia': anios_experiencia(secciones),
-        'empresas': entidades['EMPRESA'],
+        'empresas': unir_empresas(entidades['EMPRESA'], secciones, entidades['HABILIDAD']),
         'titulos': entidades['TITULO'],
         'instituciones': entidades['INSTITUCION'],
         'habilidades': entidades['HABILIDAD'],
