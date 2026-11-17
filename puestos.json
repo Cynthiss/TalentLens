@@ -1,0 +1,48 @@
+{
+  "pesos": {
+    "habilidades": 50,
+    "experiencia": 20,
+    "similitud": 30
+  },
+  "puestos": [
+    {
+      "id": 1,
+      "nombre": "Analista de Datos",
+      "oferta": "Buscamos Analista de Datos con al menos 3 años de experiencia. Requisitos: Python, SQL, Power BI y Estadística. Construirás tableros de indicadores, modelos de pronóstico de ventas y automatización de reportes para gerencia. Licenciatura en Estadística, Ingeniería en Sistemas o carrera afín.",
+      "habilidades": [
+        "Python",
+        "SQL",
+        "Power BI",
+        "Estadística"
+      ],
+      "anios": 3
+    },
+    {
+      "id": 2,
+      "nombre": "Desarrollador Backend",
+      "oferta": "Empresa de tecnología busca Desarrollador Backend con mínimo 2 años de experiencia. Conocimientos en Python o Java, Docker, AWS, PostgreSQL y REST APIs. Desarrollo de servicios en la nube, migración de sistemas y revisión de código.",
+      "habilidades": [
+        "Python",
+        "Java",
+        "Docker",
+        "AWS",
+        "PostgreSQL",
+        "REST APIs"
+      ],
+      "anios": 2
+    },
+    {
+      "id": 3,
+      "nombre": "Contador General",
+      "oferta": "Importante empresa solicita Contador General. Requisitos: Licenciatura en Contaduría Pública y Auditoría, 4 años de experiencia en puestos similares, dominio de NIIF, SAP y Excel avanzado. Funciones: elaboración de estados financieros mensuales, conciliaciones bancarias y apoyo en auditorías externas.",
+      "habilidades": [
+        "SAP",
+        "Excel",
+        "conciliaciones bancarias",
+        "Auditoría",
+        "NIIF"
+      ],
+      "anios": 4
+    }
+  ]
+}
