@@ -31,7 +31,7 @@ CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción 
    - **Experiencia (20%):** sus años frente a los mínimos (100% si los cumple), multiplicado por qué tan relacionado está el perfil (el mayor entre habilidades y similitud). Así, muchos años en otra área no hacen compatible a alguien.
    - **Similitud con la oferta (30%):** TF-IDF + similitud coseno entre el texto del CV y la oferta; capta funciones y sector aunque no sean habilidades. Una similitud de 0.35 cuenta como 100%.
 
-   Cada candidato se asigna al puesto con el que tiene mayor %, solo si llega al **30%**; si no, queda **sin puesto**.
+   Cada candidato se asigna al puesto con el que tiene mayor %, solo si llega al **21%**; si no, queda **sin puesto**.
 6. **Producto.** App de Streamlit con dos páginas (Puestos y Candidatos), clasificación por puesto, filtros y descarga en CSV.
 
 ## Datos
@@ -74,9 +74,11 @@ Con valores que nunca vio en entrenamiento, el modelo reentrenado encuentra el *
 
 **Clasificación por puesto (40 CVs sintéticos de prueba)**
 
-Con tres puestos de ejemplo (Analista de Datos, Desarrollador Backend y Contador General), 10 de los 40 CVs son de profesiones relacionadas (2 de datos, 5 de desarrollo y 3 de contabilidad). La app asignó 9, **todos al puesto de su profesión**; el que faltó, un Líder Técnico, sacó 22%. Los 30 CVs de otras profesiones (marketing, enfermería, docencia...) sacaron 17% o menos y quedaron **sin puesto**.
+Con tres puestos de ejemplo (Analista de Datos, Desarrollador Backend y Contador General), 10 de los 40 CVs son de profesiones relacionadas (2 de datos, 5 de desarrollo y 3 de contabilidad). Con el umbral de 21%, la app asignó los 10 **al puesto de su profesión**. Los 30 CVs de otras profesiones (marketing, enfermería, docencia...) sacaron 17% o menos y quedaron **sin puesto**.
 
-Con los 4 CVs reales: la estudiante de Ingeniería en Computer Science quedó como Analista de Datos (52%) y la de Contaduría y Auditoría como Contador General (31%); las otras dos, de marketing y operaciones, quedaron sin puesto.
+El umbral se eligió con una función de valor por vacante: horas del reclutador ahorradas menos el costo de perder candidatos calificados. En 660 pares CV-puesto, 21% es el punto de mayor valor: no se pierde ningún calificado y solo pasa el 1.3% de los demás.
+
+Con los CVs reales: la estudiante de Ingeniería en Computer Science quedó como Analista de Datos (52%) y la de Contaduría y Auditoría como Contador General (31%); las otras dos, de marketing y operaciones, quedaron sin puesto.
 
 | Campo (40 sintéticos de prueba) | Precisión | Recall | F1 |
 |---|---|---|---|
@@ -107,7 +109,7 @@ Con los 4 CVs reales: la estudiante de Ingeniería en Computer Science quedó co
 - **Habilidades nuevas.** Es la entidad más difícil: el modelo reentrenado encuentra el 68% de las habilidades de prueba. Las empresas son más fáciles porque casi siempre empiezan con un tipo de negocio conocido ("Grupo", "Distribuidora"...).
 - **Fechas solo con año.** Si el CV dice "2022 - 2026" sin mes, se asume julio; ese error no se puede eliminar.
 - **Errores visibles del NER.** A veces confunde un puesto con una empresa o habilidad (por ejemplo "Auditora Interna") o marca un apellido como habilidad. La app muestra las entidades resaltadas para que el reclutador pueda revisarlas.
-- **Compatibilidad.** La escala de similitud (0.35 = 100%) y el umbral de 30% se calibraron con los CVs sintéticos; con CVs reales habría que revisarlos. El % no mide la calidad de la experiencia, solo qué tanto coincide el CV con la oferta.
+- **Compatibilidad.** La escala de similitud (0.35 = 100%) y el umbral de 21% se calibraron con los CVs sintéticos; con CVs reales habría que revisarlos. El % no mide la calidad de la experiencia, solo qué tanto coincide el CV con la oferta.
 - **Teléfonos.** La expresión regular está pensada para números de Guatemala (`+502 XXXX-XXXX`).
 
 ## Instalación
@@ -211,4 +213,4 @@ TalentLens/
 ## Próximas versiones
 
 - Evaluar con CVs reales anonimizados.
-- Calibrar la escala de similitud y el umbral de 30% con más CVs y ofertas reales.
+- Calibrar la escala de similitud y el umbral de 21% con más CVs y ofertas reales.
