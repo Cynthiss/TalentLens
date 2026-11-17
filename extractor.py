@@ -20,12 +20,80 @@ CARPETA = Path(__file__).parent
 
 # ---------- 1. Captura ----------
 
+def texto_linea(linea):
+    """Texto de una línea del PDF. Si las letras vienen espaciadas ("B A C H I L L E R E N"),
+    las une y separa las palabras donde el espacio entre letras es mayor."""
+    letras = [c for s in linea['spans'] for c in s['chars']]
+    texto = ''.join(c['c'] for c in letras)
+    fichas = texto.split()
+    if len(fichas) < 4 or sum(len(f) == 1 for f in fichas) < 0.8 * len(fichas):
+        return texto
+    visibles = [c for c in letras if not c['c'].isspace()]
+    huecos = [b['bbox'][0] - a['bbox'][2] for a, b in zip(visibles, visibles[1:])]
+    normal = sorted(huecos)[len(huecos) // 2]
+    palabras = visibles[0]['c']
+    for hueco, c in zip(huecos, visibles[1:]):
+        palabras += (' ' if hueco > 1.6 * normal + 1 else '') + c['c']
+    return palabras
+
+
+def ordenar_bloques(bloques, profundidad=0):
+    """Orden de lectura de los bloques (x0, y0, x1, y1, texto) de una página: corte XY recursivo.
+
+    Los CVs hechos con plantillas (Canva, por ejemplo) guardan los bloques en el orden en que
+    se dibujaron, no en el que se leen. Se corta la región por su franja en blanco más ancha:
+    un corte vertical separa columnas (se leen de izquierda a derecha) y uno horizontal separa
+    filas (de arriba a abajo).
+    """
+    def por_posicion(grupo):
+        return sorted(grupo, key=lambda b: (b[1], b[0]))
+
+    if len(bloques) <= 1 or profundidad > 30:
+        return por_posicion(bloques)
+
+    def huecos(eje):
+        intervalos = sorted((b[eje], b[eje + 2]) for b in bloques)
+        resultado, alcance = [], intervalos[0][1]
+        for inicio, fin in intervalos[1:]:
+            if inicio > alcance:
+                resultado.append((alcance, inicio))
+            alcance = max(alcance, fin)
+        return resultado
+
+    verticales, horizontales = huecos(0), huecos(1)
+    ancho_v = max((b - a for a, b in verticales), default=0)
+    ancho_h = max((b - a for a, b in horizontales), default=0)
+    if ancho_v >= 8 and ancho_v >= ancho_h:
+        cortes, eje = verticales, 0
+    elif horizontales:
+        cortes, eje = horizontales, 1
+    else:
+        return por_posicion(bloques)
+
+    limites = [inicio for inicio, _ in cortes] + [float('inf')]
+    grupos = [[] for _ in limites]
+    for b in bloques:
+        grupos[next(i for i, limite in enumerate(limites) if b[eje] < limite)].append(b)
+    return [b for g in grupos if g for b in ordenar_bloques(g, profundidad + 1)]
+
+
+def texto_pagina(pagina):
+    """Texto de una página en orden de lectura."""
+    lineas = []
+    for bloque in pagina.get_text('rawdict')['blocks']:
+        for linea in bloque.get('lines', []):  # los bloques de imagen no tienen líneas
+            texto = texto_linea(linea)
+            if texto.strip():
+                lineas.append((*linea['bbox'], texto))
+    return '\n'.join(l[4] for l in ordenar_bloques(lineas))
+
+
 def leer_pdf(datos):
     """Texto de un PDF; si una página no tiene texto, se lee con OCR."""
     paginas = []
     with pymupdf.open(stream=datos, filetype='pdf') as pdf:
         for pagina in pdf:
-            texto = pagina.get_text()
+            texto = texto_pagina(pagina)
             if len(texto.strip()) < 20:
                 pix = pagina.get_pixmap(dpi=300)
                 img = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
@@ -89,13 +157,17 @@ SECCIONES = {
     'perfil': ['perfil', 'perfil profesional', 'sobre mi', 'resumen', 'objetivo', 'acerca de mi', 'profile'],
     'experiencia': ['experiencia', 'experiencia laboral', 'experiencia profesional', 'trayectoria',
                     'trayectoria profesional', 'historial laboral', 'experience'],
-    'educacion': ['educacion', 'formacion', 'formacion academica', 'preparacion academica', 'estudios', 'education'],
+    'educacion': ['educacion', 'formacion', 'formacion academica', 'preparacion academica', 'estudios', 'education',
+                  'datos academicos'],
     'habilidades': ['habilidades', 'competencias', 'skills', 'aptitudes', 'conocimientos',
                     'conocimientos tecnicos', 'herramientas y conocimientos'],
     'idiomas': ['idiomas', 'lenguas', 'languages'],
-    'cursos': ['cursos', 'certificaciones', 'cursos y certificaciones'],
+    'cursos': ['cursos', 'certificaciones', 'cursos y certificaciones', 'certificaciones y cursos', 'certificados',
+               'diplomas', 'diplomados'],
     'referencias': ['referencias'],
-    'otros': ['informacion adicional'],
+    # no cuentan para los años de experiencia: voluntariados, eventos, viajes...
+    'otros': ['informacion adicional', 'otros conocimientos', 'experiencia adicional', 'experiencias internacionales',
+              'voluntariado', 'logros', 'premios'],
 }
 ENCABEZADOS = {frase: sec for sec, frases in SECCIONES.items() for frase in frases}
 # segunda palabra de un encabezado partido en dos líneas (tablas): "EXPERIENCIA\nPROFESIONAL"
@@ -159,7 +231,9 @@ def separar_secciones(texto):
 # ---------- 3. Extracción ----------
 
 RE_EMAIL = re.compile(r'[\w.+-]+@[\w-]+\.[\w.]+')
-RE_TELEFONO = re.compile(r'(?:\+502\s?)?\d{4}[-\s]?\d{4}')
+# 5632-6945, 5632 6945, 56326945 y también con espacios alrededor del guion: 4891 - 1973
+RE_TELEFONO = re.compile(r'(?<!\d)(?:\+502\s?)?\d{4}(?:\s?-\s?|\s)?\d{4}(?!\d)')
+RE_ANIO = re.compile(r'(19|20)\d\d')
 CONECTORES = {'de', 'del', 'la', 'los', 'las', 'y'}
 
 
@@ -174,8 +248,11 @@ def extraer_email(texto):
 
 
 def extraer_telefono(texto):
-    m = RE_TELEFONO.search(texto)
-    return m.group() if m else None
+    for m in RE_TELEFONO.finditer(texto):
+        mitades = re.findall(r'\d{4}', m.group().removeprefix('+502'))
+        if not all(RE_ANIO.fullmatch(d) for d in mitades):  # "2025 - 2026" es un rango de fechas
+            return m.group()
+    return None
 
 
 def parece_nombre(linea):
@@ -200,17 +277,19 @@ def extraer_nombre(secciones, nlp):
             posicion += 1
             if not parece_nombre(linea):
                 continue
-            # nombre en mayúsculas partido por una columna angosta: "VANESSA VILLATORO\nMONROY"
+            # nombre partido en dos líneas: "VANESSA VILLATORO\nMONROY", "Cynthia Michelle\nSantos Letona"
+            # (solo si la segunda línea no aparece en otra parte del CV, como pasaría con un puesto: "DOCENTE")
             siguiente = lineas[i + 1] if i + 1 < len(lineas) else ''
-            # (solo si esa palabra no aparece en otra parte del CV, como pasaría con un puesto: "DOCENTE")
-            if linea.isupper() and siguiente.isupper() and siguiente.isalpha() and \
-                    todo.count(siguiente.lower()) == 1 and not detectar_encabezado(siguiente)[0]:
+            if siguiente and linea.isupper() == siguiente.isupper() and todo.count(siguiente.lower()) == 1 and \
+                    len(linea.split()) + len(siguiente.split()) <= 5 and not detectar_encabezado(siguiente)[0] and \
+                    (siguiente.isalpha() or parece_nombre(siguiente)):
                 linea = f'{linea} {siguiente}'
             doc = nlp(linea.title() if linea.isupper() else linea)
             es_persona = any(e.label_ == 'PER' and len(e.text) >= 0.8 * len(doc.text) for e in doc.ents)
             # un puesto suele repetirse en el perfil o la experiencia; el nombre aparece una sola vez
             se_repite = todo.count(linea.lower()) > 1
-            puntaje = 2 * es_persona + (len(linea.split()) >= 3) - 2 * se_repite - 0.1 * posicion
+            en_habilidades = seccion == 'habilidades'  # dos habilidades en líneas seguidas: "After Effects\nPhotoshop"
+            puntaje = 2 * es_persona + (len(linea.split()) >= 3) - 2 * se_repite - 2 * en_habilidades - 0.1 * posicion
             candidatos.append((puntaje, linea))
     if not candidatos:
         return None
@@ -258,24 +337,59 @@ def anios_experiencia(secciones, referencia=None):
     return round(meses / 12, 1)
 
 
-def extraer_entidades(texto, ner_cv):
+RE_NO_EMPRESA = re.compile(r'^(certificad[oa]|certificaci[oó]n|curso|diplomado|idioma)\b', re.I)
+
+
+def es_ruido(valor, etiqueta, nombre):
+    """Entidades que el NER marca por error en CVs reales."""
+    if len(valor) < 3 and not valor.isupper():
+        return True  # restos de íconos: "In" (LinkedIn)
+    if re.search(r'[/@]|\.com\b|\+\d', valor):
+        return True  # enlaces, correos y teléfonos: "Linkedin.com/in/..."
+    if nombre and set(valor.lower().split()) <= set(nombre.lower().split()):
+        return True  # parte del nombre del candidato: "Santos Letona"
+    return etiqueta in ('EMPRESA', 'HABILIDAD') and RE_NO_EMPRESA.match(valor) is not None
+
+
+def extraer_entidades(texto, ner_cv, nombre=None):
     """Listas de EMPRESA, TITULO, INSTITUCION y HABILIDAD sin repetidos."""
     campos = {'EMPRESA': [], 'TITULO': [], 'INSTITUCION': [], 'HABILIDAD': []}
-    for e in ner_cv(texto).ents:
+    vistos = set()
+    for e in ner_cv(texto_para_ner(texto)).ents:
         valor = ' '.join(e.text.split())  # une saltos de línea
-        if valor.lower() not in [v.lower() for v in campos[e.label_]]:
-            campos[e.label_].append(valor)
+        clave = (e.label_, sin_acentos(valor))  # "Marroquin" y "MARROQUÍN" son la misma
+        if es_ruido(valor, e.label_, nombre) or clave in vistos:
+            continue
+        vistos.add(clave)
+        campos[e.label_].append(valor)
     return campos
+
+
+MINUSCULAS = {'de', 'del', 'en', 'con', 'y', 'e', 'la', 'las', 'el', 'los', 'a', 'por', 'para'}
+
+
+def texto_para_ner(texto):
+    """Las líneas en MAYÚSCULAS pasan a formato título ("BACHILLERATO EN CIENCIAS" -> "Bachillerato en
+    Ciencias"): el NER se entrenó sobre todo con texto en formato título y no reconoce las mayúsculas.
+    Las siglas cortas (UFM, SQL) se quedan igual. El texto conserva su largo, así que las posiciones no cambian."""
+    lineas = []
+    for linea in texto.split('\n'):
+        if linea.isupper() and len(linea.split()) >= 2:
+            linea = ' '.join(p.lower() if p.lower() in MINUSCULAS else p if len(p) <= 3 else p.title()
+                             for p in linea.split(' '))
+        lineas.append(linea)
+    return '\n'.join(lineas)
 
 
 def procesar_cv(datos, nombre_archivo, nlp, ner_cv):
     """Pipeline completo para un CV: devuelve un diccionario con los campos extraídos."""
     texto = limpiar_texto(leer_cv(datos, nombre_archivo))
     secciones = separar_secciones(texto)
-    entidades = extraer_entidades(texto, ner_cv)
+    nombre = extraer_nombre(secciones, nlp)
+    entidades = extraer_entidades(texto, ner_cv, nombre)
     return {
         'archivo': nombre_archivo,
-        'nombre': extraer_nombre(secciones, nlp),
+        'nombre': nombre,
         'email': extraer_email(texto),
         'telefono': extraer_telefono(texto),
         'anios_experiencia': anios_experiencia(secciones),
