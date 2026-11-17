@@ -105,15 +105,18 @@ for puesto in list(puestos):
 # ---------- Cálculo ----------
 with st.expander('¿Cómo se calcula el % de compatibilidad?'):
     st.markdown("""
-El % de un candidato con un puesto combina tres partes:
+Por defecto, el % es la **similitud con la oferta**: qué tanto se parece el texto del CV al de la oferta,
+con **TF-IDF y similitud coseno**. Un candidato es compatible desde 19%.
+
+Se eligió así con una función de valor (horas que ahorra el reclutador menos candidatos calificados perdidos):
+en 1,860 pares CV-puesto fue la opción de mayor valor. Dar peso a las habilidades lo bajaba, porque la oferta
+y el CV suelen nombrar distinto la misma habilidad (SQL en la oferta, Snowflake en el CV).
+
+Las **habilidades** que tiene o le faltan y sus **años de experiencia** se siguen mostrando como explicación.
+Si quieres que también cuenten en el %, cambia su peso:
 
 - **Habilidades:** cuántas de las habilidades requeridas tiene el candidato.
-- **Experiencia:** sus años frente a los años mínimos del puesto (100% si los cumple o supera), multiplicado por
-  qué tan relacionado está su perfil (el mayor entre habilidades y similitud): los años en otra área no cuentan.
-- **Similitud con la oferta:** qué tanto se parece el texto del CV al de la oferta, con **TF-IDF y similitud coseno**.
-  Capta palabras que no son habilidades, como funciones o sector.
-
-Puedes cambiar cuánto pesa cada parte:
+- **Experiencia:** sus años frente a los mínimos, multiplicado por qué tan relacionado está su perfil.
 """)
     nuevos = {
         'habilidades': st.slider('Habilidades', 0, 100, pesos['habilidades'], 5, format='%d%%'),

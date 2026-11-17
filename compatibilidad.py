@@ -1,6 +1,7 @@
 """Compatibilidad entre un CV y una oferta de empleo.
 
-El porcentaje combina tres partes:
+El porcentaje puede combinar tres partes (los pesos se configuran en la app; por defecto solo cuenta
+la similitud, que fue la opción de mayor valor):
 - Habilidades: cuántas de las habilidades requeridas tiene el candidato.
 - Experiencia: sus años frente a los años mínimos del puesto, multiplicado por qué tan relacionado
   está el perfil (la mayor entre habilidades y similitud).

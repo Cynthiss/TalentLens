@@ -15,11 +15,13 @@ ARCHIVO_PUESTOS = CARPETA / 'puestos.json'
 AZUL = '#121F38'
 VERDE = '#1C7A6B'
 COLORES_NER = {'EMPRESA': '#e4dcf7', 'TITULO': '#dbe7f7', 'INSTITUCION': '#d8efe6', 'HABILIDAD': '#f7dede'}
-# por debajo de este %, ningún puesto se considera compatible. Se eligió con la función de valor
-# (horas ahorradas al reclutador menos candidatos calificados perdidos): en 660 pares CV-puesto,
-# con 21% no se pierde ningún calificado y solo pasa el 1.3% de los demás.
-MINIMO_COMPATIBLE = 21
-PESOS_INICIALES = {'habilidades': 50, 'experiencia': 20, 'similitud': 30}
+# por debajo de este %, ningún puesto se considera compatible. Umbral y pesos se eligieron con la
+# función de valor (horas ahorradas al reclutador menos candidatos calificados perdidos) en 1,860 pares
+# CV-puesto: con el % igual a la similitud TF-IDF y 19%, no se pierde ninguno de los 144 calificados y
+# solo pasan 2 de 1,716 no calificados. Mezclar habilidades bajaba el valor: la oferta y el CV suelen
+# nombrar distinto la misma habilidad (SQL / Snowflake). Habilidades y experiencia se muestran como explicación.
+MINIMO_COMPATIBLE = 19
+PESOS_INICIALES = {'habilidades': 0, 'experiencia': 0, 'similitud': 100}
 
 ESTILOS = f"""
 <style>

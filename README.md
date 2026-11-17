@@ -26,12 +26,11 @@ CV (PDF / Word) → Captura de texto → Limpieza → Secciones → Extracción 
    - **Nombre:** NER preentrenado de spaCy (`es_core_news_sm`) + reglas, ignorando las secciones donde aparecen otras personas (referencias).
    - **Años de experiencia:** lectura de rangos de fechas en cuatro formatos (`mar 2021`, `03/2021`, `Marzo de 2021`, `2021`), sin contar dos veces los periodos que se traslapan.
    - **Empresas, títulos, instituciones y habilidades:** NER de spaCy **entrenado con etiquetas propias** (`EMPRESA`, `TITULO`, `INSTITUCION`, `HABILIDAD`).
-5. **Compatibilidad con los puestos.** De la oferta de cada puesto se sacan las habilidades requeridas (NER + habilidades conocidas escritas en la oferta) y los años mínimos ("al menos 3 años de experiencia"). El % de cada candidato combina tres partes, con pesos ajustables:
-   - **Habilidades (50%):** cuántas de las requeridas tiene; cuenta si el NER la encontró o si aparece escrita en el CV.
-   - **Experiencia (20%):** sus años frente a los mínimos (100% si los cumple), multiplicado por qué tan relacionado está el perfil (el mayor entre habilidades y similitud). Así, muchos años en otra área no hacen compatible a alguien.
-   - **Similitud con la oferta (30%):** TF-IDF + similitud coseno entre el texto del CV y la oferta; capta funciones y sector aunque no sean habilidades. Una similitud de 0.35 cuenta como 100%.
+5. **Compatibilidad con los puestos.** El % de cada candidato con un puesto es la **similitud TF-IDF + coseno** entre el texto del CV y la oferta (una similitud de 0.35 cuenta como 100%). De la oferta también se sacan las habilidades requeridas (NER + habilidades conocidas escritas en la oferta) y los años mínimos ("al menos 3 años de experiencia"); la app muestra cuáles tiene y cuáles le faltan, como explicación. Desde la app se les puede dar peso en el %:
+   - **Habilidades:** cuántas de las requeridas tiene; cuenta si el NER la encontró o si aparece escrita en el CV.
+   - **Experiencia:** sus años frente a los mínimos, multiplicado por qué tan relacionado está el perfil.
 
-   Cada candidato se asigna al puesto con el que tiene mayor %, solo si llega al **21%**; si no, queda **sin puesto**.
+   Cada candidato se asigna al puesto con el que tiene mayor %, solo si llega al **19%**; si no, queda **sin puesto**. Los pesos y el umbral se eligieron con una función de valor (ver Resultados).
 6. **Producto.** App de Streamlit con dos páginas (Puestos y Candidatos), clasificación por puesto, filtros y descarga en CSV.
 
 ## Datos
@@ -72,13 +71,19 @@ En los 200 CVs sintéticos: nombre 99.5%, correo 98.5%, teléfono 100% y error p
 
 Con valores que nunca vio en entrenamiento, el modelo reentrenado encuentra el **79%** (285 de 359); el modelo inicial encontraba 1 de 4.
 
-**Clasificación por puesto (40 CVs sintéticos de prueba)**
+**Compatibilidad: umbral y modelo elegidos por valor**
 
-Con tres puestos de ejemplo (Analista de Datos, Desarrollador Backend y Contador General), 10 de los 40 CVs son de profesiones relacionadas (2 de datos, 5 de desarrollo y 3 de contabilidad). Con el umbral de 21%, la app asignó los 10 **al puesto de su profesión**. Los 30 CVs de otras profesiones (marketing, enfermería, docencia...) sacaron 17% o menos y quedaron **sin puesto**.
+Función de valor por vacante: horas del reclutador ahorradas (a Q65/h) menos el costo de perder candidatos calificados (Q400 cada uno) menos el servidor. Se midió en **1,860 pares CV-puesto** (620 CVs ficticios × 3 puestos; 144 calificados), incluidos 400 CVs de prueba nuevos generados con otra semilla y con habilidades que no aparecen en las ofertas:
 
-El umbral se eligió con una función de valor por vacante: horas del reclutador ahorradas menos el costo de perder candidatos calificados. En 660 pares CV-puesto, 21% es el punto de mayor valor: no se pierde ningún calificado y solo pasa el 1.3% de los demás.
+| Modelo | Mejor umbral | Valor por vacante | Calificados perdidos |
+|---|---|---|---|
+| **Similitud TF-IDF** (el que usa la app) | 19% | **Q391** | 0 de 144 |
+| Combinado (50% habilidades, 20% experiencia, 30% similitud) | 6% | Q320 | 0 de 144 |
+| Solo palabras clave (como un ATS típico) | — | negativo | — |
 
-Con los CVs reales: la estudiante de Ingeniería en Computer Science quedó como Analista de Datos (52%) y la de Contaduría y Auditoría como Contador General (31%); las otras dos, de marketing y operaciones, quedaron sin puesto.
+Con una primera muestra de 58 calificados, el combinado con umbral 21% parecía el mejor; con los 400 CVs nuevos perdía 8 de 144 calificados, porque la oferta y el CV nombran distinto las mismas habilidades (SQL / Snowflake). El resultado con TF-IDF aguanta ±20% y ±50% en cada supuesto: el valor sigue positivo y el umbral óptimo se queda en 19%.
+
+En los 40 CVs sintéticos de prueba originales, los 10 de profesiones relacionadas quedaron en el puesto de su profesión y los 30 de otras profesiones quedaron sin puesto. Con los CVs reales: la estudiante de Computer Science quedó como Analista de Datos (28%), la de Contaduría y Auditoría como Contador General (35%) y el estudiante de Ingeniería en Sistemas como Desarrollador Backend (19%); las de marketing y operaciones quedaron sin puesto.
 
 | Campo (40 sintéticos de prueba) | Precisión | Recall | F1 |
 |---|---|---|---|
@@ -109,7 +114,7 @@ Con los CVs reales: la estudiante de Ingeniería en Computer Science quedó como
 - **Habilidades nuevas.** Es la entidad más difícil: el modelo reentrenado encuentra el 68% de las habilidades de prueba. Las empresas son más fáciles porque casi siempre empiezan con un tipo de negocio conocido ("Grupo", "Distribuidora"...).
 - **Fechas solo con año.** Si el CV dice "2022 - 2026" sin mes, se asume julio; ese error no se puede eliminar.
 - **Errores visibles del NER.** A veces confunde un puesto con una empresa o habilidad (por ejemplo "Auditora Interna") o marca un apellido como habilidad. La app muestra las entidades resaltadas para que el reclutador pueda revisarlas.
-- **Compatibilidad.** La escala de similitud (0.35 = 100%) y el umbral de 21% se calibraron con los CVs sintéticos; con CVs reales habría que revisarlos. El % no mide la calidad de la experiencia, solo qué tanto coincide el CV con la oferta.
+- **Compatibilidad.** La escala de similitud (0.35 = 100%) y el umbral de 19% se calibraron con CVs sintéticos; con CVs reales habría que revisarlos. El % no mide la calidad de la experiencia, solo qué tanto coincide el CV con la oferta.
 - **Teléfonos.** La expresión regular está pensada para números de Guatemala (`+502 XXXX-XXXX`).
 
 ## Instalación
@@ -213,4 +218,4 @@ TalentLens/
 ## Próximas versiones
 
 - Evaluar con CVs reales anonimizados.
-- Calibrar la escala de similitud y el umbral de 21% con más CVs y ofertas reales.
+- Calibrar la escala de similitud y el umbral de 19% con más CVs y ofertas reales.

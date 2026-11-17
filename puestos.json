@@ -1,8 +1,8 @@
 {
   "pesos": {
-    "habilidades": 50,
-    "experiencia": 20,
-    "similitud": 30
+    "habilidades": 0,
+    "experiencia": 0,
+    "similitud": 100
   },
   "puestos": [
     {
