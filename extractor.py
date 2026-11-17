@@ -41,14 +41,14 @@ def ordenar_bloques(bloques, profundidad=0):
     """Orden de lectura de los bloques (x0, y0, x1, y1, texto) de una página: corte XY recursivo.
 
     Los CVs hechos con plantillas (Canva, por ejemplo) guardan los bloques en el orden en que
-    se dibujaron, no en el que se leen. Se corta la región por su franja en blanco más ancha:
-    un corte vertical separa columnas (se leen de izquierda a derecha) y uno horizontal separa
-    filas (de arriba a abajo).
+    se dibujaron, no en el que se leen. Se corta la región por sus franjas en blanco: un corte
+    vertical separa columnas (se leen de izquierda a derecha) y uno horizontal separa filas
+    (de arriba a abajo). Cada parte se ordena igual.
     """
     def por_posicion(grupo):
         return sorted(grupo, key=lambda b: (b[1], b[0]))
 
-    if len(bloques) <= 1 or profundidad > 30:
+    if len(bloques) <= 1 or profundidad > 50:
         return por_posicion(bloques)
 
     def huecos(eje):
@@ -66,7 +66,9 @@ def ordenar_bloques(bloques, profundidad=0):
     if ancho_v >= 8 and ancho_v >= ancho_h:
         cortes, eje = verticales, 0
     elif horizontales:
-        cortes, eje = horizontales, 1
+        # solo las franjas claras (al menos la mitad de la más ancha): con dos columnas bajo un
+        # encabezado, los huecos pequeños donde ambas columnas coinciden mezclarían sus renglones
+        cortes, eje = [(a, b) for a, b in horizontales if b - a >= ancho_h / 2], 1
     else:
         return por_posicion(bloques)
 
@@ -77,6 +79,21 @@ def ordenar_bloques(bloques, profundidad=0):
     return [b for g in grupos if g for b in ordenar_bloques(g, profundidad + 1)]
 
 
+def unir_renglones(lineas):
+    """Une los pedazos de un mismo renglón que el PDF guarda por separado (texto justificado:
+    "colaborativos," ... "demostrando") en una sola línea."""
+    unidas = []
+    for x0, y0, x1, y1, texto in lineas:
+        if unidas:
+            ux0, uy0, ux1, uy1, utexto = unidas[-1]
+            traslape = min(y1, uy1) - max(y0, uy0)
+            if traslape > 0.5 * min(y1 - y0, uy1 - uy0) and x0 >= ux1 - 2:
+                unidas[-1] = (ux0, min(y0, uy0), x1, max(y1, uy1), f'{utexto.rstrip()} {texto.lstrip()}')
+                continue
+        unidas.append((x0, y0, x1, y1, texto))
+    return unidas
+
+
 def texto_pagina(pagina):
     """Texto de una página en orden de lectura."""
     lineas = []
@@ -85,7 +102,7 @@ def texto_pagina(pagina):
             texto = texto_linea(linea)
             if texto.strip():
                 lineas.append((*linea['bbox'], texto))
-    return '\n'.join(l[4] for l in ordenar_bloques(lineas))
+    return '\n'.join(l[4] for l in unir_renglones(ordenar_bloques(lineas)))
 
 
 def leer_pdf(datos):
@@ -351,18 +368,42 @@ def es_ruido(valor, etiqueta, nombre):
     return etiqueta in ('EMPRESA', 'HABILIDAD') and RE_NO_EMPRESA.match(valor) is not None
 
 
+def spans_entidades(texto, ner_cv, nombre=None):
+    """(inicio, fin, etiqueta, valor) de cada entidad del NER que no es ruido."""
+    for e in ner_cv(texto_para_ner(texto)).ents:
+        valor = ' '.join(e.text.split()).strip(' ,;:')  # une saltos de línea
+        if valor.count('(') != valor.count(')'):
+            valor = valor.strip('()').strip()  # paréntesis sueltos: "PowerPoint)"
+        if not es_ruido(valor, e.label_, nombre):
+            yield e.start_char, e.end_char, e.label_, valor
+
+
 def extraer_entidades(texto, ner_cv, nombre=None):
     """Listas de EMPRESA, TITULO, INSTITUCION y HABILIDAD sin repetidos."""
     campos = {'EMPRESA': [], 'TITULO': [], 'INSTITUCION': [], 'HABILIDAD': []}
     vistos = set()
-    for e in ner_cv(texto_para_ner(texto)).ents:
-        valor = ' '.join(e.text.split())  # une saltos de línea
-        clave = (e.label_, sin_acentos(valor))  # "Marroquin" y "MARROQUÍN" son la misma
-        if es_ruido(valor, e.label_, nombre) or clave in vistos:
-            continue
-        vistos.add(clave)
-        campos[e.label_].append(valor)
+    for _, _, etiqueta, valor in spans_entidades(texto, ner_cv, nombre):
+        clave = (etiqueta, sin_acentos(valor))  # "Marroquin" y "MARROQUÍN" son la misma
+        if clave not in vistos:
+            vistos.add(clave)
+            campos[etiqueta].append(valor)
     return campos
+
+
+def entidades_para_mostrar(resultado, ner_cv):
+    """Posiciones de las entidades que terminaron en la tabla de un CV procesado, para resaltarlas
+    en el texto: las del NER (sin las empresas descartadas) y las empresas encontradas por estructura."""
+    texto = resultado['texto']
+    empresas = {e.lower() for e in resultado['empresas']}
+    nombre = resultado['nombre'] if isinstance(resultado['nombre'], str) else None
+    spans = [(i, f, etiqueta) for i, f, etiqueta, valor in spans_entidades(texto, ner_cv, nombre)
+             if etiqueta != 'EMPRESA' or valor.lower() in empresas]
+    for empresa in resultado['empresas']:
+        patron = r'\s+'.join(map(re.escape, empresa.split()))
+        for m in re.finditer(patron, texto, flags=re.I):
+            if not any(i < m.end() and m.start() < f for i, f, _ in spans):
+                spans.append((m.start(), m.end(), 'EMPRESA'))
+    return sorted(spans)
 
 
 MINUSCULAS = {'de', 'del', 'en', 'con', 'y', 'e', 'la', 'las', 'el', 'los', 'a', 'por', 'para'}
@@ -425,7 +466,7 @@ def empresas_por_estructura(experiencia, conocidas=(), habilidades=()):
         if linea.endswith('.') and not sociedad:
             continue  # final de una oración
         importantes = [w for w in palabras if w.lower() not in MINUSCULAS]
-        if not sociedad and sum(w[0].isupper() for w in importantes) < 0.6 * len(importantes):
+        if not sociedad and sum(w[0].isupper() for w in importantes) < 0.5 * len(importantes):
             continue  # tarea en minúsculas, "Planificación de rutas de entrega"; una empresa va con mayúsculas
         anterior = lineas[i - 1] if i > 0 else ''
         siguiente = lineas[i + 1] if i + 1 < len(lineas) else ''

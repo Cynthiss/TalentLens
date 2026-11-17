@@ -28,6 +28,10 @@ ESTILOS = f"""
   .paso {{ background: #fff; border: 1px solid #DDD6CA; border-radius: 12px; padding: 18px; height: 100%; }}
   .paso b {{ color: {VERDE}; }}
   mark {{ color: #1E2433; }}
+  .detalle-ner .entities {{ line-height: 1.75 !important; font-size: 0.92rem; }}
+  .detalle-ner mark {{ padding: 0.1em 0.35em !important; margin: 0 0.1em !important; line-height: 1.4 !important;
+                       border-radius: 0.3em !important; }}
+  .detalle-ner mark span {{ font-size: 0.65em !important; margin-left: 0.35em !important; }}
 </style>
 """
 

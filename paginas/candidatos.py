@@ -6,6 +6,8 @@ import pandas as pd
 import streamlit as st
 from spacy import displacy
 
+import extractor
+
 from comun import (AZUL, COLORES_NER, MINIMO_COMPATIBLE, VERDE, calcular_compatibilidad, cargar_modelos,
                    encabezado, etiqueta, leer_puestos, procesar)
 
@@ -253,9 +255,22 @@ with tab_detalle:
     st.write('Texto de cada CV con las entidades que encontró el modelo NER. '
              'Sirve para revisar si la extracción es correcta.')
     _, ner_cv = cargar_modelos()
+    tipos = [('empresas', 'Empresas', 'violet'), ('titulos', 'Títulos', 'blue'),
+             ('instituciones', 'Instituciones', 'green'), ('habilidades', 'Habilidades', 'red')]
     for _, fila in filtrados.iterrows():
-        with st.expander(f"{fila['nombre']} · {fila['anios_experiencia']:.1f} años"):
-            st.html(displacy.render(ner_cv(fila['texto']), style='ent', options={'colors': COLORES_NER}))
+        titulo_cv = fila['nombre'] if isinstance(fila['nombre'], str) else fila['archivo']
+        with st.expander(f"{titulo_cv} · {fila['anios_experiencia']:.1f} años"):
+            columnas = st.columns(4)
+            for columna, (campo, titulo, color) in zip(columnas, tipos):
+                columna.markdown(f'**{titulo}** ({len(fila[campo])})')
+                columna.markdown(' '.join(f':{color}-badge[{etiqueta(v)}]' for v in fila[campo]) or '—')
+            st.markdown('**Texto del CV con las entidades resaltadas**')
+            spans = extractor.entidades_para_mostrar(fila, ner_cv)
+            html = displacy.render({'text': fila['texto'], 'title': None,
+                                    'ents': [{'start': i, 'end': f, 'label': e} for i, f, e in spans]},
+                                   style='ent', manual=True, options={'colors': COLORES_NER})
+            with st.container(height=420):
+                st.html(f'<div class="detalle-ner">{html}</div>')
 
 st.caption('TalentLens no reemplaza al reclutador: ordena la información para acelerar la revisión inicial. '
            'Revisa siempre el CV original antes de descartar a alguien.')
